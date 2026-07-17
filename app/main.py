@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -37,6 +39,25 @@ def set_editor_text(sql_text: str, connection_id: int | None = None):
     st.session_state["last_error"] = None
     st.session_state["last_analysis"] = None
     st.session_state["analysis_error"] = None
+
+
+def load_favorite(sql_text: str, connection_id: int | None, auto_run: bool):
+    """Favorite-button callback: load the query into the editor, and if it's an auto-run
+    favorite, flag it to execute immediately on this rerun."""
+    set_editor_text(sql_text, connection_id)
+    st.session_state["pending_run"] = bool(auto_run)
+
+
+def extract_sql_block(markdown_text: str | None) -> str | None:
+    """Pulls the first SQL code block out of a Claude review (its suggested rewrite)."""
+    if not markdown_text:
+        return None
+    match = re.search(r"```sql\s*(.*?)```", markdown_text, re.DOTALL | re.IGNORECASE)
+    if not match:
+        match = re.search(r"```\s*(.*?)```", markdown_text, re.DOTALL)
+    if not match:
+        return None
+    return match.group(1).strip() or None
 
 
 # --- sidebar: connection management ----------------------------------------
@@ -125,14 +146,15 @@ if favorites:
         for col, fav in zip(row_cols, row_favs):
             with col:
                 st.button(
-                    fav.name,
+                    f"⚡ {fav.name}" if fav.auto_run else fav.name,
                     key=f"fav_btn_{fav.id}",
                     use_container_width=True,
-                    on_click=set_editor_text,
-                    args=(fav.sql_text, fav.connection_id),
+                    on_click=load_favorite,
+                    args=(fav.sql_text, fav.connection_id, fav.auto_run),
+                    help="Runs immediately on click" if fav.auto_run else "Loads into the editor",
                 )
 else:
-    st.caption("No favorite queries yet. Add one below.")
+    st.caption("No favorite queries yet — run a query and use ⭐ Save as button, or add one below.")
 
 with st.expander("Manage favorite queries"):
     with st.form("add_favorite_form", clear_on_submit=True):
@@ -144,18 +166,20 @@ with st.expander("Manage favorite queries"):
             options=fav_conn_options,
             format_func=lambda cid: "— none —" if cid is None else connections_by_id[cid].name,
         )
+        fav_auto_run = st.checkbox("Run immediately when the button is clicked")
         if st.form_submit_button("Add favorite", type="primary"):
             if not fav_name or not fav_sql:
                 st.error("Label and SQL are required.")
             else:
-                db.create_favorite_query(fav_name, fav_sql, fav_conn_id)
+                db.create_favorite_query(fav_name, fav_sql, fav_conn_id, fav_auto_run)
                 st.rerun()
 
     if favorites:
         st.caption("Existing favorites")
         for fav in favorites:
             row = st.columns([4, 1])
-            row[0].write(f"**{fav.name}**")
+            marker = " ⚡" if fav.auto_run else ""
+            row[0].write(f"**{fav.name}**{marker}")
             if row[1].button("🗑", key=f"del_fav_{fav.id}"):
                 db.delete_favorite_query(fav.id)
                 st.rerun()
@@ -180,24 +204,54 @@ analyze_clicked = analyze_col.button(
     help="Deeper AI review (requires ANTHROPIC_API_KEY).",
 )
 
+# Save the current editor query as a quick-access button.
+with st.popover("⭐ Save as button", use_container_width=False):
+    st.caption("Save the current query as a favorite button for quick access.")
+    save_name = st.text_input("Button label", key="save_btn_name", placeholder="e.g. Optimized top customers")
+    save_conn_options = [None] + [c.id for c in all_connections]
+    save_conn_id = st.selectbox(
+        "Bind to connection (optional)",
+        options=save_conn_options,
+        format_func=lambda cid: "— none —" if cid is None else connections_by_id[cid].name,
+        key="save_btn_conn",
+    )
+    save_auto_run = st.checkbox("Run immediately when the button is clicked", key="save_btn_autorun")
+    if st.button("Save button", type="primary", key="save_btn_go"):
+        if not save_name.strip():
+            st.warning("Enter a button label.")
+        elif not st.session_state["sql_editor"].strip():
+            st.warning("The editor is empty — nothing to save.")
+        else:
+            db.create_favorite_query(
+                save_name.strip(), st.session_state["sql_editor"], save_conn_id, save_auto_run
+            )
+            st.success(f"Saved '{save_name.strip()}'.")
+            st.rerun()
+
 if check_clicked:
     st.session_state["local_findings"] = analyzer.analyze_sql(
         st.session_state["sql_editor"],
         active_connection.db_type if active_connection else None,
     )
 
-if run_clicked:
+pending_run = st.session_state.pop("pending_run", False)
+if run_clicked or pending_run:
     st.session_state["last_error"] = None
     st.session_state["last_result"] = None
-    try:
-        result = conn_lib.run_query(
-            active_connection.db_type, active_connection.url, st.session_state["sql_editor"]
+    if not active_connection:
+        st.session_state["last_error"] = (
+            "No active connection — select one in the sidebar to run this query."
         )
-        result["sql"] = st.session_state["sql_editor"]
-        result["connection_label"] = f"{active_connection.name} ({active_connection.db_type})"
-        st.session_state["last_result"] = result
-    except Exception as exc:  # noqa: BLE001
-        st.session_state["last_error"] = str(exc)
+    else:
+        try:
+            result = conn_lib.run_query(
+                active_connection.db_type, active_connection.url, st.session_state["sql_editor"]
+            )
+            result["sql"] = st.session_state["sql_editor"]
+            result["connection_label"] = f"{active_connection.name} ({active_connection.db_type})"
+            st.session_state["last_result"] = result
+        except Exception as exc:  # noqa: BLE001
+            st.session_state["last_error"] = str(exc)
 
 if analyze_clicked:
     st.session_state["analysis_error"] = None
@@ -372,3 +426,13 @@ if st.session_state["analysis_error"]:
 elif st.session_state["last_analysis"]:
     st.subheader("✨ Claude's review")
     st.markdown(st.session_state["last_analysis"])
+
+    optimized_sql = extract_sql_block(st.session_state["last_analysis"])
+    if optimized_sql:
+        st.markdown("**Optimized query**")
+        st.code(optimized_sql, language="sql")
+        st.button(
+            "⬆ Use in editor", key="use_optimized",
+            on_click=set_editor_text, args=(optimized_sql,),
+        )
+        st.caption("Loads it into the editor — then use ⭐ Save as button to keep it for quick runs.")

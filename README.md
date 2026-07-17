@@ -65,11 +65,22 @@ In the sidebar, pick a database type and paste a connection URL:
 Use **Test** before **Save** to confirm the app can reach the database. Connection URLs are
 encrypted before being written to `data/app_metadata.db`.
 
-## Favorite queries
+## Favorite queries (quick-run buttons)
 
-Add a named query (optionally bound to a specific connection) under "Manage favorite queries".
-It shows up as a button — clicking it loads the SQL into the editor (and switches the active
-connection, if one is bound).
+Favorite queries appear as buttons above the editor. There are two ways to create one:
+
+- **⭐ Save as button** (next to the query actions) — saves whatever is currently in the editor,
+  including a query you just optimized. Give it a label, optionally bind a connection, and
+  optionally tick **Run immediately when clicked**.
+- **Manage favorite queries** — a form to add one manually.
+
+Clicking a favorite loads its SQL into the editor (and switches the active connection if one is
+bound). If it was saved with **run immediately**, it also executes on click (shown with a ⚡) —
+true one-click quick-run.
+
+After **✨ Analyze with Claude**, its suggested rewrite is extracted into an **Optimized query**
+panel with a **⬆ Use in editor** button, so you can load the optimized SQL and then **⭐ Save as
+button** to keep it.
 
 ## Results & exportable reports
 
