@@ -70,6 +70,24 @@ Add a named query (optionally bound to a specific connection) under "Manage favo
 It shows up as a button — clicking it loads the SQL into the editor (and switches the active
 connection, if one is bound).
 
+## Results & exportable reports
+
+After running a `SELECT`, results are shown with summary tiles (row/column counts, numeric
+columns, query time) and the data grid. Open **📊 Build & export report** to assemble a
+customizable report:
+
+- Set a **title**, **subtitle/author**, **notes**, and an **accent color**.
+- Toggle which sections to include: summary, chart, SQL query, data table.
+- Add a **chart** (bar / line / area) by picking an X column and one or more numeric Y columns —
+  rendered as inline SVG.
+- Choose the max number of rows to embed in the report table.
+
+Then download in one click:
+
+- **HTML report** — a single self-contained file (inlined CSS + SVG chart), great for sharing or
+  printing to PDF from a browser.
+- **CSV**, **Excel (.xlsx)**, or **JSON** of the raw result set.
+
 ## Analyze with Claude
 
 Sends only the SQL text currently in the editor (plus the target dialect name, e.g.

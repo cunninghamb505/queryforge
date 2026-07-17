@@ -1,9 +1,14 @@
 import pandas as pd
 import streamlit as st
 
+from datetime import datetime
+
+import streamlit.components.v1 as components
+
 from app import db
 from app import connections as conn_lib
 from app import claude_client
+from app import report
 from app.theme import inject_theme
 
 st.set_page_config(page_title="SQL Optimizer", layout="wide")
@@ -164,9 +169,12 @@ if run_clicked:
     st.session_state["last_error"] = None
     st.session_state["last_result"] = None
     try:
-        st.session_state["last_result"] = conn_lib.run_query(
+        result = conn_lib.run_query(
             active_connection.db_type, active_connection.url, st.session_state["sql_editor"]
         )
+        result["sql"] = st.session_state["sql_editor"]
+        result["connection_label"] = f"{active_connection.name} ({active_connection.db_type})"
+        st.session_state["last_result"] = result
     except Exception as exc:  # noqa: BLE001
         st.session_state["last_error"] = str(exc)
 
@@ -188,10 +196,122 @@ if st.session_state["last_error"]:
     st.error(st.session_state["last_error"])
 elif st.session_state["last_result"]:
     result = st.session_state["last_result"]
+    elapsed_ms = result.get("elapsed_ms")
     if result["kind"] == "rows":
         df: pd.DataFrame = result["dataframe"]
-        st.success(f"{len(df)} row(s) returned.")
+        summary = report.summarize(df, elapsed_ms)
+
+        # --- fancy summary tiles ---
+        t1, t2, t3, t4 = st.columns(4)
+        t1.metric("Rows", f"{summary['rows']:,}")
+        t2.metric("Columns", f"{summary['cols']:,}")
+        t3.metric("Numeric cols", f"{summary['numeric_cols']:,}")
+        t4.metric("Query time", f"{elapsed_ms:.0f} ms" if elapsed_ms is not None else "—")
+
         st.dataframe(df, use_container_width=True)
+
+        if df.empty:
+            st.info("Query returned no rows — nothing to chart or export.")
+        else:
+            # --- build & export report ---
+            with st.expander("📊 Build & export report", expanded=False):
+                numeric_cols = report.numeric_columns(df)
+
+                cfg1, cfg2 = st.columns(2)
+                rpt_title = cfg1.text_input("Report title", value="Query Report", key="rpt_title")
+                rpt_subtitle = cfg2.text_input(
+                    "Subtitle / author", value="", key="rpt_subtitle",
+                    placeholder="e.g. Weekly metrics — prepared by …",
+                )
+                rpt_accent = cfg1.color_picker("Accent color", value="#8b5cf6", key="rpt_accent")
+                rpt_table_limit = cfg2.number_input(
+                    "Max rows in report table", min_value=1, max_value=100_000,
+                    value=min(len(df), 500), step=50, key="rpt_table_limit",
+                )
+                rpt_notes = st.text_area(
+                    "Notes (optional)", value="", key="rpt_notes",
+                    placeholder="Context, caveats, takeaways… shown in the report.",
+                )
+
+                st.caption("Include in report")
+                s1, s2, s3, s4 = st.columns(4)
+                inc_summary = s1.checkbox("Summary", value=True, key="rpt_inc_summary")
+                inc_chart = s2.checkbox("Chart", value=bool(numeric_cols), key="rpt_inc_chart")
+                inc_sql = s3.checkbox("SQL query", value=True, key="rpt_inc_sql")
+                inc_table = s4.checkbox("Data table", value=True, key="rpt_inc_table")
+
+                chart_svg = None
+                if inc_chart:
+                    if not numeric_cols:
+                        st.warning("No numeric columns available to chart.")
+                    else:
+                        ch1, ch2, ch3 = st.columns(3)
+                        chart_type = ch1.selectbox(
+                            "Chart type", ["bar", "line", "area"], key="rpt_chart_type"
+                        )
+                        x_col = ch2.selectbox(
+                            "X axis (labels)", list(df.columns), key="rpt_chart_x"
+                        )
+                        default_y = numeric_cols[:1]
+                        y_cols = ch3.multiselect(
+                            "Y axis (values)", numeric_cols, default=default_y, key="rpt_chart_y"
+                        )
+                        if y_cols:
+                            labels = df[x_col].astype(str).tolist()
+                            series = [{"name": c, "values": df[c].tolist()} for c in y_cols]
+                            chart_svg = report.svg_chart(
+                                labels, series, chart_type=chart_type, accent=rpt_accent
+                            )
+                            if chart_svg:
+                                components.html(
+                                    f'<div style="background:#fff;border-radius:10px;padding:10px">{chart_svg}</div>',
+                                    height=420, scrolling=True,
+                                )
+                        else:
+                            st.caption("Pick at least one Y column to render a chart.")
+
+                html_report = report.build_html_report(
+                    df,
+                    title=rpt_title or "Query Report",
+                    subtitle=rpt_subtitle,
+                    notes=rpt_notes,
+                    sql=result.get("sql", ""),
+                    connection_label=result.get("connection_label", ""),
+                    summary=summary,
+                    accent=rpt_accent,
+                    include_sql=inc_sql,
+                    include_summary=inc_summary,
+                    include_chart=inc_chart,
+                    include_table=inc_table,
+                    table_row_limit=int(rpt_table_limit),
+                    chart_svg=chart_svg,
+                    generated_at=datetime.now(),
+                )
+
+                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                st.markdown("**Download**")
+                d1, d2, d3, d4 = st.columns(4)
+                d1.download_button(
+                    "📄 HTML report", data=html_report.encode("utf-8"),
+                    file_name=f"report-{stamp}.html", mime="text/html",
+                    use_container_width=True,
+                )
+                d2.download_button(
+                    "🧾 CSV", data=report.to_csv_bytes(df),
+                    file_name=f"results-{stamp}.csv", mime="text/csv",
+                    use_container_width=True,
+                )
+                d3.download_button(
+                    "📊 Excel", data=report.to_excel_bytes(df),
+                    file_name=f"results-{stamp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+                d4.download_button(
+                    "{ } JSON", data=report.to_json_bytes(df),
+                    file_name=f"results-{stamp}.json", mime="application/json",
+                    use_container_width=True,
+                )
     elif result["rowcount"] < 0:
         # Some drivers (e.g. sqlite3) report -1 for DDL/statements where rowcount isn't meaningful.
         st.success("Statement executed successfully.")

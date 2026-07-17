@@ -1,5 +1,7 @@
 """Builds SQLAlchemy engines for user-supplied connection URLs and runs queries against them."""
 
+import time
+
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -47,18 +49,22 @@ def test_connection(db_type: str, raw_url: str) -> tuple[bool, str]:
 def run_query(db_type: str, raw_url: str, sql: str) -> dict:
     """Executes sql and returns a dict describing the outcome.
 
-    Shape: {"kind": "rows", "dataframe": pd.DataFrame} for statements that return rows, or
-    {"kind": "rowcount", "rowcount": int} for statements that don't (INSERT/UPDATE/DDL/etc).
+    Shape: {"kind": "rows", "dataframe": pd.DataFrame, "elapsed_ms": float} for statements that
+    return rows, or {"kind": "rowcount", "rowcount": int, "elapsed_ms": float} for statements that
+    don't (INSERT/UPDATE/DDL/etc). elapsed_ms is wall-clock time to execute and fetch.
     """
     engine = build_engine(db_type, raw_url)
     try:
         with engine.connect() as conn:
+            started = time.perf_counter()
             result = conn.execute(text(sql))
             if result.returns_rows:
                 rows = result.fetchall()
                 df = pd.DataFrame(rows, columns=list(result.keys()))
-                return {"kind": "rows", "dataframe": df}
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                return {"kind": "rows", "dataframe": df, "elapsed_ms": elapsed_ms}
             conn.commit()
-            return {"kind": "rowcount", "rowcount": result.rowcount}
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            return {"kind": "rowcount", "rowcount": result.rowcount, "elapsed_ms": elapsed_ms}
     finally:
         engine.dispose()
