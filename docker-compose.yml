@@ -1,0 +1,11 @@
+services:
+  sql-optimizer:
+    build: .
+    container_name: sql-optimizer
+    ports:
+      - "8501:8501"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
