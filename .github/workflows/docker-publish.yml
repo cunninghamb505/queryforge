@@ -1,7 +1,7 @@
 name: Publish Docker image
 
 # Builds the app image and publishes it to this repo's GitHub Container Registry (GHCR)
-# package: ghcr.io/<owner>/sql-optimizer. Runs on every push to the default branch, on
+# package: ghcr.io/<owner>/<repo>. Runs on every push to the default branch, on
 # version tags, and can be triggered manually.
 on:
   push:

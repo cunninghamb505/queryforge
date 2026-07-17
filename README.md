@@ -1,8 +1,9 @@
-# SQL Optimizer
+# QueryForge
 
 A small local SQL workbench (a mini DBeaver): save database connections, run queries, keep a
-button bar of favorite/predefined queries, and send any query to Claude for a static review
-(correctness, security, performance, and locking concerns) before you run it.
+button bar of favorite/predefined queries, review queries **offline** with a built-in rule-based
+analyzer or **with Claude** for a deeper static review (correctness, security, performance, and
+locking concerns), and export polished reports.
 
 Runs entirely in one Docker container. Backend/UI is Python + [Streamlit](https://streamlit.io/),
 with an animated glassmorphism UI.
@@ -15,7 +16,7 @@ Every push to `main` publishes a Docker image to this repo's GHCR package:
 docker run --rm -p 8501:8501 \
   -e ANTHROPIC_API_KEY=sk-ant-... \
   -v "$(pwd)/data:/app/data" \
-  ghcr.io/cunninghamb505/sql-optimizer:latest
+  ghcr.io/cunninghamb505/queryforge:latest
 ```
 
 Then open http://localhost:8501. (If the package is private, run
@@ -88,11 +89,19 @@ Then download in one click:
   printing to PDF from a browser.
 - **CSV**, **Excel (.xlsx)**, or **JSON** of the raw result set.
 
-## Analyze with Claude
+## Reviewing a query
 
-Sends only the SQL text currently in the editor (plus the target dialect name, e.g.
-"PostgreSQL") to the Claude API for review — connection URLs, credentials, and query results are
-never sent. Requires `ANTHROPIC_API_KEY` to be set on the container.
+Two ways to review the SQL in the editor:
+
+- **🔍 Quick check (offline)** — a built-in, rule-based analyzer. No API key required. Flags common
+  issues such as `SELECT *`, `UPDATE`/`DELETE` without a `WHERE`, `= NULL` comparisons,
+  leading-wildcard `LIKE '%…'`, functions on columns in `WHERE` (non-sargable), implicit/comma
+  joins and joins missing an `ON`, `NOT IN (subquery)`, missing row limits, and destructive DDL.
+  Each finding comes with a severity and a suggested fix. These are heuristics — they can miss
+  things or occasionally over-flag.
+- **✨ Analyze with Claude** — a deeper AI review. Sends only the SQL text and the target dialect
+  name (e.g. "PostgreSQL") to the Claude API — connection URLs, credentials, and query results are
+  never sent. Requires `ANTHROPIC_API_KEY` to be set on the container.
 
 ## Notes / limitations
 

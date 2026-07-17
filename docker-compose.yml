@@ -1,7 +1,7 @@
 services:
-  sql-optimizer:
+  queryforge:
     build: .
-    container_name: sql-optimizer
+    container_name: queryforge
     ports:
       - "8501:8501"
     environment:

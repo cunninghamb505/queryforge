@@ -9,9 +9,12 @@ from app import db
 from app import connections as conn_lib
 from app import claude_client
 from app import report
+from app import analyzer
 from app.theme import inject_theme
 
-st.set_page_config(page_title="SQL Optimizer", layout="wide")
+APP_NAME = "QueryForge"
+
+st.set_page_config(page_title=APP_NAME, layout="wide")
 inject_theme()
 
 # --- session state defaults ------------------------------------------------
@@ -22,12 +25,14 @@ st.session_state.setdefault("last_result", None)
 st.session_state.setdefault("last_error", None)
 st.session_state.setdefault("last_analysis", None)
 st.session_state.setdefault("analysis_error", None)
+st.session_state.setdefault("local_findings", None)
 
 
 def set_editor_text(sql_text: str, connection_id: int | None = None):
     st.session_state["sql_editor"] = sql_text
     if connection_id is not None:
         st.session_state["active_connection_id"] = connection_id
+    st.session_state["local_findings"] = None
     st.session_state["last_result"] = None
     st.session_state["last_error"] = None
     st.session_state["last_analysis"] = None
@@ -102,8 +107,11 @@ active_connection = connections_by_id.get(st.session_state["active_connection_id
 
 # --- main area ---------------------------------------------------------------
 
-st.title("SQL Optimizer")
-st.caption("A mini SQL workbench: manage connections, run queries, and review them with Claude.")
+st.title(APP_NAME)
+st.caption(
+    "A mini SQL workbench — manage connections, run queries, review them offline or with Claude, "
+    "and export polished reports."
+)
 
 # Favorite queries bar
 st.subheader("Favorite queries")
@@ -161,9 +169,22 @@ else:
 
 st.text_area("SQL", key="sql_editor", height=200, label_visibility="collapsed")
 
-run_col, analyze_col = st.columns(2)
+run_col, check_col, analyze_col = st.columns(3)
 run_clicked = run_col.button("▶ Run Query", type="primary", use_container_width=True, disabled=not active_connection)
-analyze_clicked = analyze_col.button("✨ Analyze with Claude", use_container_width=True)
+check_clicked = check_col.button(
+    "🔍 Quick check", use_container_width=True,
+    help="Offline rule-based SQL review — no API key needed.",
+)
+analyze_clicked = analyze_col.button(
+    "✨ Analyze with Claude", use_container_width=True,
+    help="Deeper AI review (requires ANTHROPIC_API_KEY).",
+)
+
+if check_clicked:
+    st.session_state["local_findings"] = analyzer.analyze_sql(
+        st.session_state["sql_editor"],
+        active_connection.db_type if active_connection else None,
+    )
 
 if run_clicked:
     st.session_state["last_error"] = None
@@ -318,9 +339,36 @@ elif st.session_state["last_result"]:
     else:
         st.success(f"{result['rowcount']} row(s) affected.")
 
-# Analysis
+# Offline quick check
+if st.session_state["local_findings"] is not None:
+    findings = st.session_state["local_findings"]
+    st.subheader("🔍 Quick check (offline)")
+    if not findings:
+        st.success("No issues flagged by the offline rules. For a deeper review, use Analyze with Claude.")
+    else:
+        counts = {}
+        for f in findings:
+            counts[f["severity"]] = counts.get(f["severity"], 0) + 1
+        badge = "  ".join(
+            f"{analyzer.SEVERITY[s][0]} {counts[s]} {analyzer.SEVERITY[s][1].lower()}"
+            for s in ("high", "medium", "low", "info") if s in counts
+        )
+        st.caption(f"{len(findings)} finding(s) — {badge}")
+        for f in findings:
+            emoji, label, _ = analyzer.SEVERITY[f["severity"]]
+            with st.container(border=True):
+                # Title is kept outside the bold span so titles containing markdown
+                # characters (e.g. "SELECT *") don't break the formatting.
+                st.markdown(f"**{emoji} {label}** · {f['title']}")
+                st.markdown(f["detail"])
+                if f["suggestion"]:
+                    st.markdown(f"→ _{f['suggestion']}_")
+        st.caption("Heuristic checks — they can miss issues or occasionally over-flag. Not a substitute for testing.")
+
+# Claude analysis
 if st.session_state["analysis_error"]:
     st.error(st.session_state["analysis_error"])
+    st.info("No API key? Use **🔍 Quick check** for an offline, rule-based review instead.")
 elif st.session_state["last_analysis"]:
-    st.subheader("Claude's review")
+    st.subheader("✨ Claude's review")
     st.markdown(st.session_state["last_analysis"])
